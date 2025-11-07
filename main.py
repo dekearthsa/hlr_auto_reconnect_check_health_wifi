@@ -147,7 +147,7 @@ def main():
     if state != "connected":
         log("state not connected → trying reconnect …")
         if try_reconnect(iface):
-            time.sleep(2)
+            time.sleep(5)
 
     if check_connectivity(iface):
         ssid = nm_active_ssid(iface)
