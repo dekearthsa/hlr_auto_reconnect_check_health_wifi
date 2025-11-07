@@ -82,13 +82,35 @@ def nm_active_ssid(iface):
     return ""
 
 def nm_connect_with_ssid(ssid, password):
+    # 1) ลองวิธีง่ายก่อน (NM มักเดา PSK ให้เอง)
     rc, out, err = run(f"nmcli -w 20 dev wifi connect {shlex.quote(ssid)} password {shlex.quote(password)}")
     if rc == 0:
-        log(f"Connected to SSID={ssid}")
+        log(f"Connected to SSID={ssid} via dev wifi connect")
         return True
-    else:
-        log(f"Failed to connect SSID={ssid}: {err}")
+
+    # 2) ถ้าเจอ error key-mgmt หาย / โปรไฟล์ค้าง ให้สร้างโปรไฟล์แบบระบุ key-mgmt ชัดเจน
+    log(f"'dev wifi connect' failed: {err or out}. Trying explicit profile with wpa-psk …")
+    # ลบโปรไฟล์ชื่อเดียวกัน ถ้ามี
+    run(f"nmcli con delete {shlex.quote(ssid)}")
+    # สร้างโปรไฟล์ใหม่และใส่ key-mgmt + psk
+    rc, out, err = run(f"nmcli con add type wifi ifname wlan0 con-name {shlex.quote(ssid)} ssid {shlex.quote(ssid)}")
+    if rc != 0:
+        log(f"Failed to add connection: {err or out}")
         return False
+    rc, out, err = run(
+        f"nmcli con modify {shlex.quote(ssid)} wifi-sec.key-mgmt wpa-psk wifi-sec.psk {shlex.quote(password)}"
+    )
+    if rc != 0:
+        log(f"Failed to set wifi-sec on connection: {err or out}")
+        return False
+    rc, out, err = run(f"nmcli -w 20 con up id {shlex.quote(ssid)}")
+    if rc == 0:
+        log(f"Connected to SSID={ssid} via explicit wpa-psk profile")
+        return True
+
+    log(f"Failed to connect SSID={ssid}: {err or out}")
+    return False
+
 
 def try_reconnect(iface):
     run("nmcli radio wifi on")
