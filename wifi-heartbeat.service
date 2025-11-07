@@ -5,7 +5,6 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-Environment=PREFERRED_SSID=
-ExecStart=/usr/local/bin/wifi_heartbeat.py
+ExecStart=/usr/bin/python3 /home/pi/hlr_auto_reconnect_check_health_wifi/main.py
 Nice=5
 TimeoutStartSec=25
