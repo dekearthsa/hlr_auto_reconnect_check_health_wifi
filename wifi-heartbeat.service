@@ -1,0 +1,11 @@
+[Unit]
+Description=Wi-Fi Heartbeat (Python) & Auto-Reconnect
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PREFERRED_SSID=
+ExecStart=/usr/local/bin/wifi_heartbeat.py
+Nice=5
+TimeoutStartSec=25
