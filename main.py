@@ -6,7 +6,7 @@ import subprocess, shlex, time, sys
 LOGTAG = "wifi-heartbeat"
 
 # ---- ตั้งค่า SSID และ Password ----
-SSID = "NSTD-Wifi-Staff"
+SSID = "NSTDA-Wifi-Staff"
 PASS = "abcDEF99"
 
 # ---- เป้าหมายสำหรับ ping ตรวจเน็ต ----
