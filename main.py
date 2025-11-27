@@ -1,12 +1,9 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import subprocess, shlex, time, sys
 
 LOGTAG = "wifi-heartbeat"
 
-SSID = "NSTDA-Wifi-Staff"
-PASS = "abcDEF99"
+SSID = "TP-Link_6BE3"
+PASS = "10710760"
 
 PING_TARGETS = []
 DNS_FALLBACKS = ["1.1.1.1", "8.8.8.8"]
@@ -93,16 +90,8 @@ def nm_connect_with_ssid(ssid, password):
     return False
 
 def enforce_preferred_policy():
-    """
-    บังคับนโยบาย:
-    - โปรไฟล์ชื่อ SSID ของเรา: autoconnect=yes, priority สูง
-    - โปรไฟล์ Wi-Fi อื่น: autoconnect=no
-    """
-    # สร้าง/ซ่อมโปรไฟล์ของเราให้มี autoconnect & priority สูง
     run(f"nmcli con modify {shlex.quote(SSID)} connection.autoconnect yes")
     run(f"nmcli con modify {shlex.quote(SSID)} connection.autoconnect-priority 100")
-
-    # ปิด autoconnect โปรไฟล์ wifi อื่นทั้งหมด
     rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
     if rc == 0:
         for line in out.splitlines():
@@ -113,19 +102,15 @@ def enforce_preferred_policy():
 def try_reconnect(iface):
     run("nmcli radio wifi on")
 
-    # ถ้าเชื่อมต่ออยู่กับ SSID อื่น → ตีกลับ
     active = nm_active_ssid(iface)
     if active and active != SSID:
         log(f"connected to unwanted SSID='{active}' → switching to '{SSID}'")
         run(f"nmcli dev disconnect {iface}")
 
-    # เชื่อมต่อ SSID ที่ระบุ
     if SSID and PASS:
         if nm_connect_with_ssid(SSID, PASS):
             log(f"reconnected via SSID='{SSID}'")
             return True
-
-    # (สำรอง) ไล่โปรไฟล์อื่นถ้าจำเป็น — แต่เราปิด autoconnect อื่นไว้แล้ว ปกติจะไม่มาใช้ช่วงนี้
     rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
     if rc == 0:
         for line in out.splitlines():
@@ -155,8 +140,8 @@ def main():
         if try_reconnect(iface):
             time.sleep(12)
 
-    # ถ้าต่ออยู่แต่ไม่ใช่ SSID เป้าหมาย → ตีกลับ
     current = nm_active_ssid(iface)
+
     if current and current != SSID:
         log(f"currently on '{current}' → force switching to '{SSID}'")
         run(f"nmcli dev disconnect {iface}")
@@ -168,7 +153,7 @@ def main():
         log(f"online ✓ SSID='{ssid or 'unknown'}'")
         sys.exit(0)
 
-    # ยังไม่ออนไลน์ → hard reset อุปกรณ์
+
     log("still offline → hard reset device …")
     run(f"nmcli dev disconnect {iface}")
     time.sleep(2)
