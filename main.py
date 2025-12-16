@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import subprocess, shlex, time, sys
 
 LOGTAG = "wifi-heartbeat"
@@ -21,6 +18,7 @@ def run(cmd, timeout=10, check=False):
         return 1, "", f"error: {e}"
 
 def log(msg): print(f"{LOGTAG}: {msg}", flush=True)
+
 
 def nm_wifi_if():
     rc, out, _ = run("nmcli -t -f DEVICE,TYPE dev status")
@@ -68,41 +66,35 @@ def nm_active_ssid(iface):
         if dev == iface: return name
     return ""
 
-def nm_connect_with_ssid(ssid, password):
-    # 1) พยายามเชื่อมต่อแบบง่ายก่อน (จะสร้างโปรไฟล์ให้เอง)
-    rc, out, err = run(f"nmcli -w 20 dev wifi connect {shlex.quote(ssid)} password {shlex.quote(password)}")
-    if rc == 0:
-        log(f"Connected to SSID={ssid} via dev wifi connect")
-        return True
-    # 2) โปรไฟล์เพี้ยน → ลบแล้วสร้างโปรไฟล์ wpa-psk ชัดเจน
-    log(f"'dev wifi connect' failed: {err or out}. Recreate profile with wpa-psk …")
-    run(f"nmcli con delete {shlex.quote(ssid)}")
-    rc, out, err = run(f"nmcli con add type wifi ifname wlan0 con-name {shlex.quote(ssid)} ssid {shlex.quote(ssid)}")
-    if rc != 0:
-        log(f"Failed to add connection: {err or out}")
-        return False
-    rc, out, err = run(f"nmcli con modify {shlex.quote(ssid)} wifi-sec.key-mgmt wpa-psk wifi-sec.psk {shlex.quote(password)}")
-    if rc != 0:
-        log(f"Failed to set wifi-sec: {err or out}")
-        return False
-    rc, out, err = run(f"nmcli -w 20 con up id {shlex.quote(ssid)}")
-    if rc == 0:
-        log(f"Connected to SSID={ssid} via explicit wpa-psk profile")
-        return True
-    log(f"Failed to connect SSID={ssid}: {err or out}")
-    return False
+# def nm_connect_with_ssid(ssid, password):
+#     # 1) พยายามเชื่อมต่อแบบง่ายก่อน (จะสร้างโปรไฟล์ให้เอง)
+#     rc, out, err = run(f"nmcli -w 20 dev wifi connect {shlex.quote(ssid)} password {shlex.quote(password)}")
+#     if rc == 0:
+#         log(f"Connected to SSID={ssid} via dev wifi connect")
+#         return True
+#     # 2) โปรไฟล์เพี้ยน → ลบแล้วสร้างโปรไฟล์ wpa-psk ชัดเจน
+#     log(f"'dev wifi connect' failed: {err or out}. Recreate profile with wpa-psk …")
+#     run(f"nmcli con delete {shlex.quote(ssid)}")
+#     rc, out, err = run(f"nmcli con add type wifi ifname wlan0 con-name {shlex.quote(ssid)} ssid {shlex.quote(ssid)}")
+#     if rc != 0:
+#         log(f"Failed to add connection: {err or out}")
+#         return False
+#     rc, out, err = run(f"nmcli con modify {shlex.quote(ssid)} wifi-sec.key-mgmt wpa-psk wifi-sec.psk {shlex.quote(password)}")
+#     if rc != 0:
+#         log(f"Failed to set wifi-sec: {err or out}")
+#         return False
+#     rc, out, err = run(f"nmcli -w 20 con up id {shlex.quote(ssid)}")
+#     if rc == 0:
+#         log(f"Connected to SSID={ssid} via explicit wpa-psk profile")
+#         return True
+#     log(f"Failed to connect SSID={ssid}: {err or out}")
+#     return False
 
 def enforce_preferred_policy():
-    """
-    บังคับนโยบาย:
-    - โปรไฟล์ชื่อ SSID ของเรา: autoconnect=yes, priority สูง
-    - โปรไฟล์ Wi-Fi อื่น: autoconnect=no
-    """
-    # สร้าง/ซ่อมโปรไฟล์ของเราให้มี autoconnect & priority สูง
+    if not nm_has_conn_id(SSID):
+        return
     run(f"nmcli con modify {shlex.quote(SSID)} connection.autoconnect yes")
     run(f"nmcli con modify {shlex.quote(SSID)} connection.autoconnect-priority 100")
-
-    # ปิด autoconnect โปรไฟล์ wifi อื่นทั้งหมด
     rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
     if rc == 0:
         for line in out.splitlines():
@@ -113,29 +105,78 @@ def enforce_preferred_policy():
 def try_reconnect(iface):
     run("nmcli radio wifi on")
 
-    # ถ้าเชื่อมต่ออยู่กับ SSID อื่น → ตีกลับ
     active = nm_active_ssid(iface)
     if active and active != SSID:
         log(f"connected to unwanted SSID='{active}' → switching to '{SSID}'")
         run(f"nmcli dev disconnect {iface}")
 
-    # เชื่อมต่อ SSID ที่ระบุ
     if SSID and PASS:
-        if nm_connect_with_ssid(SSID, PASS):
-            log(f"reconnected via SSID='{SSID}'")
-            return True
-
-    # (สำรอง) ไล่โปรไฟล์อื่นถ้าจำเป็น — แต่เราปิด autoconnect อื่นไว้แล้ว ปกติจะไม่มาใช้ช่วงนี้
-    rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
-    if rc == 0:
-        for line in out.splitlines():
-            name, typ = (line.split(":",1)+[""])[:2]
-            if typ == "802-11-wireless" and name == SSID:
-                if run(f"nmcli -w 10 con up id {shlex.quote(name)}")[0] == 0:
-                    log(f"reconnected via saved profile: {name}")
-                    return True
+        ok = ensure_wifi_profile(iface, SSID, PASS)
+        if ok:
+            enforce_preferred_policy()
+        return ok
 
     log("no usable wifi profile/ssid found")
+    return False
+
+def nm_has_conn_id(conn_id: str) -> bool:
+    rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
+    if rc != 0:
+        return False
+    for line in out.splitlines():
+        name, typ = (line.split(":", 1) + [""])[:2]
+        if name == conn_id and typ == "802-11-wireless":
+            return True
+    return False
+
+
+def cleanup_wifi_dupes(base_ssid: str):
+    # ลบพวก "NSTDA-Wifi-Staff 1/2/3" ทิ้ง เหลือไว้แค่ชื่อ exact เดียว
+    rc, out, _ = run("nmcli -t -f NAME,TYPE con show")
+    if rc != 0:
+        return
+    for line in out.splitlines():
+        name, typ = (line.split(":", 1) + [""])[:2]
+        if typ == "802-11-wireless" and name.startswith(base_ssid + " ") and name != base_ssid:
+            run(f"nmcli con delete id {shlex.quote(name)}")
+
+
+def ensure_wifi_profile(iface: str, ssid: str, password: str) -> bool:
+    cleanup_wifi_dupes(ssid)
+
+    # 1) ถ้ามีโปรไฟล์แล้ว → ยกโปรไฟล์เดิมขึ้นมา (ห้ามใช้ dev wifi connect เพราะมันสร้างใหม่เสมอ)
+    if nm_has_conn_id(ssid):
+        rc, out, err = run(f"nmcli -w 20 con up id {shlex.quote(ssid)} ifname {shlex.quote(iface)}")
+        if rc == 0:
+            log(f"Connected via existing profile: {ssid}")
+            return True
+        log(f"con up failed: {err or out} (will try recreate)")
+
+        # ถ้าโปรไฟล์พังจริง ๆ ค่อยลบทิ้งแล้วสร้างใหม่ 1 อัน
+        run(f"nmcli con delete id {shlex.quote(ssid)}")
+
+    # 2) สร้างโปรไฟล์ครั้งเดียว (ไม่ hardcode wlan0)
+    rc, out, err = run( 
+        f"nmcli con add type wifi ifname {shlex.quote(iface)} con-name {shlex.quote(ssid)} ssid {shlex.quote(ssid)}"
+    )
+    if rc != 0:
+        log(f"Failed to add connection: {err or out}")
+        return False
+
+    rc, out, err = run(
+        f"nmcli con modify {shlex.quote(ssid)} wifi-sec.key-mgmt wpa-psk wifi-sec.psk {shlex.quote(password)}"
+    )
+    if rc != 0:
+        log(f"Failed to set wifi-sec: {err or out}")
+        return False
+
+    # ยกขึ้นมาใช้งาน
+    rc, out, err = run(f"nmcli -w 20 con up id {shlex.quote(ssid)} ifname {shlex.quote(iface)}")
+    if rc == 0:
+        log(f"Connected via recreated profile: {ssid}")
+        return True
+
+    log(f"Failed to connect SSID={ssid}: {err or out}")
     return False
 
 def main():
@@ -155,12 +196,18 @@ def main():
         if try_reconnect(iface):
             time.sleep(12)
 
-    # ถ้าต่ออยู่แต่ไม่ใช่ SSID เป้าหมาย → ตีกลับ
     current = nm_active_ssid(iface)
+
+    # if current and current != SSID:
+    #     log(f"currently on '{current}' → force switching to '{SSID}'")
+    #     run(f"nmcli dev disconnect {iface}")
+    #     if not nm_connect_with_ssid(SSID, PASS):
+    #         log("force switch failed")
+
     if current and current != SSID:
         log(f"currently on '{current}' → force switching to '{SSID}'")
         run(f"nmcli dev disconnect {iface}")
-        if not nm_connect_with_ssid(SSID, PASS):
+        if not ensure_wifi_profile(iface, SSID, PASS):
             log("force switch failed")
 
     if check_connectivity(iface):
@@ -168,11 +215,12 @@ def main():
         log(f"online ✓ SSID='{ssid or 'unknown'}'")
         sys.exit(0)
 
-    # ยังไม่ออนไลน์ → hard reset อุปกรณ์
+
     log("still offline → hard reset device …")
     run(f"nmcli dev disconnect {iface}")
     time.sleep(2)
-    run(f"nmcli dev connect {iface}")
+
+    ensure_wifi_profile(iface, SSID, PASS)
     time.sleep(3)
 
     ok = check_connectivity(iface)
